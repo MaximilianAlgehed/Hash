@@ -5,8 +5,9 @@ import System.Environment
 import System.Posix.Process
 import System.Posix.IO
 import System.Posix.Files
-import Data.List.Split
 import Control.Exception
+import Control.Concurrent
+import Data.List.Split
 
 -- Execute a program with a given redirect for stdin and out
 executeWith s in_fd out_fd = do
@@ -31,7 +32,7 @@ makeProcesses (x:xs) in_fd out_fd = do
 
 -- Strip a set of programs of file redirects
 fixPgms [] = []
-fixPgms (x:xs) = (head (splitOn " > " (head (splitOn " < " x)))):(fixPgms xs) 
+fixPgms (x:xs) = (filter (\x -> x /= '&') ((head (splitOn " > " (head (splitOn " < " x)))))):(fixPgms xs) 
 
 -- Redirect stdin to file if needed
 getInput (x:_)
@@ -55,19 +56,26 @@ startPrograms pgms = do
 -- Handle all the input
 handleInput "exit" = return False -- exit
 handleInput ('c':'d':xs) -- cd
-    | xs == "" = (getEnv "HOME") >>= setCurrentDirectory >>= (\_ -> return True) -- cd to home
+    | xs == "" = (getEnv "HOME") >>= setCurrentDirectory >> return True -- cd to home
     | (head xs) == ' ' = do -- cd to wherever
                             result <- try $ setCurrentDirectory (tail xs) :: IO (Either SomeException ())
                             case result of
-                                Left ex -> putStrLn "Action not possible" >>= (\_ -> return True)
+                                Left ex -> putStrLn "Action not possible" >> return True
                                 Right () -> return True
 -- Any number of piped programs
 handleInput s = do
-                    let pgms = splitOn " | " s
-                    processes <- startPrograms pgms
-                    sequence $ map (\pid -> getProcessStatus True True pid) processes
+                    let pgms = filter (\x -> x /= "") $ splitOn " | " s
+                    processes <- (if not (null pgms) then startPrograms pgms
+                                    else return [])
+                    if not (background s) then waitFor processes
+                        else (if not (null processes) then ((forkIO (waitFor processes)) >> return ())
+                                else return ())
                     return True
-
+                    where
+                        waitFor processes = do
+                                                sequence $ map (\pid -> getProcessStatus True True pid) processes
+                                                return ()
+                        background = elem '&'
 -- Readline and execute it
 readEvalLoop = do
                 maybeLine <- getCurrentDirectory >>= readline . (\s->s++"$> ")
