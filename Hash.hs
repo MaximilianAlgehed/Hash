@@ -5,6 +5,7 @@ import System.Environment
 import System.Posix.Process
 import System.Posix.IO
 import System.Posix.Files
+import System.Posix.Signals
 import Control.Exception
 import Control.Concurrent
 import Data.List.Split
@@ -16,17 +17,21 @@ executeWith s in_fd out_fd = do
                                 executeFile (head (splitOn " " s)) True (filter (not . null) (tail (splitOn " " s))) Nothing
 
 -- Start the processes given in a list
-makeProcess [] _ _ = return []
+makeProcess [] _ _ _ = return []
 -- We are at the end of the line, don't pipe
-makeProcesses [x] in_fd out_fd = do 
+makeProcesses [x] in_fd out_fd background = do 
                                     pid <- forkProcess (executeWith x in_fd out_fd)
+                                    if background then setProcessGroupIDOf pid 0
+                                        else return ()
                                     return [pid]
 -- Start the process and pipe
-makeProcesses (x:xs) in_fd out_fd = do
+makeProcesses (x:xs) in_fd out_fd background = do
                                         (r, w) <- createPipe
                                         pid <- forkProcess $ executeWith x in_fd w
                                         closeFd w
-                                        lst <- makeProcesses xs r out_fd
+                                        if background then setProcessGroupIDOf pid 0
+                                            else return ()
+                                        lst <- makeProcesses xs r out_fd background
                                         closeFd r
                                         return (pid:lst)
 
@@ -48,10 +53,10 @@ getOutput (x:_)
         dropped = takeWhile (\x -> x /= ' ') $ drop 2 $ dropWhile (\x -> x /= '>') x
 
 -- Start all the programs in the list pgms
-startPrograms pgms = do
-                        input <- getInput pgms
-                        output <- getOutput (reverse pgms)
-                        makeProcesses (fixPgms pgms) input output
+startPrograms pgms background = do
+                                    input <- getInput pgms
+                                    output <- getOutput (reverse pgms)
+                                    makeProcesses (fixPgms pgms) input output background
 
 -- Handle all the input
 handleInput "exit" = return False -- exit
@@ -65,7 +70,7 @@ handleInput ('c':'d':xs) -- cd
 -- Any number of piped programs
 handleInput s = do
                     let pgms = filter (\x -> x /= "") $ splitOn " | " s
-                    processes <- (if not (null pgms) then startPrograms pgms
+                    processes <- (if not (null pgms) then startPrograms pgms (background s)
                                     else return [])
                     if not (background s) then waitFor processes
                         else (if not (null processes) then ((forkIO (waitFor processes)) >> return ())
@@ -90,5 +95,6 @@ readEvalLoop = do
 -- Get the ball rolling
 main :: IO ()
 main = do
+        installHandler sigINT Ignore Nothing
         readInitFile "/etc/inputrc"
         readEvalLoop
