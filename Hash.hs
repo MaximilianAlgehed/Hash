@@ -83,7 +83,7 @@ handleInput s = do
                         background = elem '&'
 -- Readline and execute it
 readEvalLoop = do
-                maybeLine <- getCurrentDirectory >>= readline . (\s->s++"$> ")
+                maybeLine <- getCurrentDirectory >>= readline . (\s->s++" >>= ")
                 case maybeLine of
                     Nothing -> putStrLn "" >>= return
                     Just line -> do
