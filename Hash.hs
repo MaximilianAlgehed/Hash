@@ -9,12 +9,14 @@ import System.Posix.Signals
 import Control.Exception
 import Control.Concurrent
 import Data.List.Split
+import qualified Text.Parsec as Parsec
+import qualified Parser as Parser
 
 -- Execute a program with a given redirect for stdin and out
-executeWith s in_fd out_fd = do
+executeWith pgm in_fd out_fd = do
                                 dupTo in_fd stdInput
                                 dupTo out_fd stdOutput
-                                executeFile (head (splitOn " " s)) True (filter (not . null) (tail (splitOn " " s))) Nothing
+                                executeFile (head pgm) True (filter (not . null) (tail pgm)) Nothing
 
 -- Start the processes given in a list
 makeProcess [] _ _ _ = return []
@@ -35,44 +37,25 @@ makeProcesses (x:xs) in_fd out_fd background = do
                                         closeFd r
                                         return (pid:lst)
 
--- Strip a set of programs of file redirects
-fixPgms [] = []
-fixPgms (x:xs) = (filter (\x -> x /= '&') ((head (splitOn " > " (head (splitOn " < " x)))))):(fixPgms xs) 
-
 -- Redirect stdin to file if needed
-getInput (x:_)
-    | elem '<' x = openFd dropped ReadOnly (Just ownerModes) defaultFileFlags
-    | otherwise = return stdInput
-    where
-        dropped = takeWhile (\x -> x /= ' ') $ drop 2 $ dropWhile (\x -> x /= '<') x
+getInput "" = return stdInput
+getInput x = openFd x ReadOnly (Just ownerReadMode) defaultFileFlags
+
 -- Redirect stdout to file if needed
-getOutput (x:_)
-    | elem '>' x = openFd dropped WriteOnly (Just ownerModes) defaultFileFlags
-    | otherwise = return stdOutput
-    where
-        dropped = takeWhile (\x -> x /= ' ') $ drop 2 $ dropWhile (\x -> x /= '>') x
+getOutput "" = return stdOutput
+getOutput x = openFd x WriteOnly (Just ownerWriteMode) defaultFileFlags
 
 -- Start all the programs in the list pgms
-startPrograms pgms background = do
-                                    input <- getInput pgms
-                                    output <- getOutput (reverse pgms)
-                                    makeProcesses (fixPgms pgms) input output background
+startPrograms pgms background input output = do
+                                    makeProcesses pgms input output background
 
--- Handle all the input
-handleInput "exit" = return False -- exit
-handleInput ('c':'d':xs) -- cd
-    | xs == "" = (getEnv "HOME") >>= setCurrentDirectory >> return True -- cd to home
-    | (head xs) == ' ' = do -- cd to wherever
-                            result <- try $ setCurrentDirectory (tail xs) :: IO (Either SomeException ())
-                            case result of
-                                Left ex -> putStrLn "Action not possible" >> return True
-                                Right () -> return True
 -- Any number of piped programs
-handleInput s = do
-                    let pgms = filter (\x -> x /= "") $ splitOn " | " s
-                    processes <- (if not (null pgms) then startPrograms pgms (background s)
+handleInput (Parser.Expression inp outp pgms background) = do
+                    input <- getInput inp
+                    output <- getOutput outp
+                    processes <- (if not (null pgms) then startPrograms pgms background input output
                                     else return [])
-                    if not (background s) then waitFor processes
+                    if not background then waitFor processes
                         else (if not (null processes) then ((forkIO (waitFor processes)) >> return ())
                                 else return ())
                     return True
@@ -80,7 +63,7 @@ handleInput s = do
                         waitFor processes = do
                                                 sequence $ map (\pid -> getProcessStatus True True pid) processes
                                                 return ()
-                        background = elem '&'
+
 -- Readline and execute it
 readEvalLoop = do
                 maybeLine <- getCurrentDirectory >>= readline . (\s->s++" >>= ")
@@ -88,7 +71,13 @@ readEvalLoop = do
                     Nothing -> putStrLn "" >>= return
                     Just line -> do
                                  addHistory line
-                                 exit <- handleInput line 
+                                 let parsed = Parsec.parse Parser.parser "(source)" line
+                                 exit <- case parsed of
+                                                Right [[]] -> return True
+                                                Right v -> do
+                                                            exit <- handleInput (Parser.makeExpr v)
+                                                            return exit
+                                                otherwise -> return True 
                                  if not exit then return ()
                                     else readEvalLoop
 
