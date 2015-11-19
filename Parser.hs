@@ -1,10 +1,13 @@
 module Parser where
 import Text.Parsec
 
-data Expression = Expression String String [[String]] Bool | None deriving Show
+data Expression = Expression String String [[String]] Bool | Exit | CD String deriving Show
 
 makeExpr :: [[[Char]]] -> Expression
-makeExpr lst = Expression (stdInRedirect (head lst))
+makeExpr lst
+    | head (head (lst)) == "cd" = if (length (head lst)) > 1 then CD (head (drop 1 (head lst))) else CD ""
+    | head (head (lst)) == "exit" = Exit
+    | otherwise = Expression (stdInRedirect (head lst))
                           (stdOutRedirect (head (reverse lst)))
                           (map (\l -> takeWhile (\s -> s /= "<" && s /= ">" && not (elem '&' s)) l) lst)
                           (elem "&" (last lst))
@@ -28,7 +31,7 @@ command = do
 parser = sepBy1 command pipe
 
 main = do
-        let parsed = parse parser "(source)" ""
+        let parsed = parse parser "(source)" "cd"
         case parsed of
-            Right v -> putStrLn $ show $ makeExpr v
+            Right v -> putStrLn $ show $ v
             otherwise -> putStrLn "Fuck"
