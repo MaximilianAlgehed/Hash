@@ -7,18 +7,38 @@ import System.Posix.IO
 import System.Posix.Files
 import System.Posix.Signals
 import System.Posix.Types
+import System.FilePath.Glob
 import Control.Exception
 import Control.Concurrent
 import Data.List.Split
+import Data.List
 import qualified Text.Parsec as Parsec
 import qualified Parser as Parser
+
+-- Takes a list of arguments and returns a list of globs from those arguments
+makeGlobsAndArgs [] = return []
+makeGlobsAndArgs (x:xs) = do
+                            currentDir <- getCurrentDirectory
+                            lst <- case tryCompileWith compPosix x of
+                                    Right pattern ->do 
+                                                        dat <- glob (decompile (simplify pattern))
+                                                        return (map (\s -> case stripPrefix (currentDir++"/") s of
+                                                                                Nothing -> s
+                                                                                Just s' -> s'
+                                                                   ) dat)
+                                    Left s -> return [s]
+                            cont <- makeGlobsAndArgs xs
+                            let ret = if null lst then [x] else lst
+                            return (ret++cont)
 
 -- Execute a program with a given redirect for stdin and out
 executeWith :: [String] -> Fd -> Fd -> IO ()
 executeWith pgm in_fd out_fd = do
                                 dupTo in_fd stdInput
                                 dupTo out_fd stdOutput
-                                executeFile (head pgm) True (filter (not . null) (tail pgm)) Nothing
+                                let args = (filter (not . null) (tail pgm))
+                                glbs <- makeGlobsAndArgs args
+                                executeFile (head pgm) True glbs Nothing
 
 -- Start the processes given in a list
 makeProcess :: [String] -> Fd -> Fd -> Bool -> IO [ProcessID]
