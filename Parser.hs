@@ -14,8 +14,13 @@ makeExpr lst
     where
         stdInRedirect l = if elem "<" l then last $ dropWhile (\s -> s /= "<") l else ""
         stdOutRedirect l = if elem ">" l then last $ dropWhile (\s -> s /= ">") l else ""
+word = (many1 (alphaNum <|> (oneOf "-_=./:@&\""))) <|> (fmap (:[]) (oneOf "<>"))
 
-word = (many1 (alphaNum <|> (oneOf "-_=./:@&"))) <|> (fmap (:[]) (oneOf "<>"))
+str = do
+        char '\''
+        wds <- (endBy word (many space))
+        char '\''
+        return (concat (map (\s -> s++" ") wds))
 
 pipe = do
         many space
@@ -24,14 +29,14 @@ pipe = do
 
 command = do
             many space
-            wds <- try (endBy word (many space)) 
+            wds <- try (endBy (word <|> str) (many space)) 
             many space
             return wds
 
 parser = sepBy1 command pipe
 
 main = do
-        let parsed = parse parser "(source)" "cd"
+        let parsed = parse parser "(source)" "awk 'abc def'"
         case parsed of
             Right v -> putStrLn $ show $ v
             otherwise -> putStrLn "Fuck"
