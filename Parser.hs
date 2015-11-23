@@ -14,9 +14,9 @@ makeExpr lst
     where
         stdInRedirect l = if elem "<" l then last $ dropWhile (\s -> s /= "<") l else ""
         stdOutRedirect l = if elem ">" l then last $ dropWhile (\s -> s /= ">") l else ""
-word = (many1 (alphaNum <|> (oneOf "$<>;-!~?_=./:@&\""))) <|> (fmap (:[]) (oneOf "<>"))
 
--- Parse a string: '<string>'
+word = (many1 (alphaNum <|> (oneOf "$<>;-!~?+\\}{][()%$#*_=./:@&\""))) <|> (fmap (:[]) (oneOf "<>"))
+
 str = do
         char '\''
         wds <- (endBy word (many space))
